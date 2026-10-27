@@ -1,0 +1,15 @@
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+const source=await readFile('worker/index.js','utf8');
+const worker=(await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'))).default;
+const ctx={waitUntil:p=>p};
+const req=s=>new Request('https://example.com'+s);
+assert.equal((await worker.fetch(req('/'),{},ctx)).status,200);
+assert.equal((await worker.fetch(req('/api/odds?sport=INVALID'),{},ctx)).status,400);
+assert.equal((await worker.fetch(req('/api/odds'),{},ctx)).status,503);
+let count=0;globalThis.fetch=async url=>{count++;assert.equal(url.hostname,'api.the-odds-api.com');assert.equal(url.searchParams.get('markets'),'spreads');return new Response(JSON.stringify([{id:'1',home_team:'Home',away_team:'Away',commence_time:'2026-10-27T00:00:00Z',bookmakers:[{title:'FanDuel',last_update:'2026-10-26T23:00:00Z',markets:[{key:'spreads',outcomes:[{name:'Home',point:-3.5,price:-110}]}]}]}]),{headers:{'x-requests-remaining':'499'}})};
+const response=await worker.fetch(req('/api/odds?sport=NBA'),{ODDS_API_KEY:'test-secret'},ctx),data=await response.json();
+assert.equal(data.events[0].quotes[0].point,-3.5);assert.equal(data.remaining,'499');assert(!JSON.stringify(data).includes('test-secret'));assert.equal(count,1);
+globalThis.fetch=async()=>new Response('{"message":"sensitive upstream details"}',{status:401});
+const rejected=await worker.fetch(req('/api/odds'),{ODDS_API_KEY:'test-secret'},ctx);assert.equal(rejected.status,502);assert(!(await rejected.text()).includes('sensitive upstream'));
+console.log('Passed routing, validation, quote normalization, quota headers, secret exclusion and provider rejection checks.');
